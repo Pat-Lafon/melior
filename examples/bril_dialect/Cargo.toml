@@ -1,0 +1,12 @@
+[package]
+name = "bril-dialect-example"
+version = "0.1.0"
+edition = "2024"
+description = "Example of using melior-build with the Bril dialect"
+
+[dependencies]
+melior = { path = "../../melior", features = ["ods-dialects"] }
+mlir-sys = "210"
+
+[build-dependencies]
+melior-build = { path = "../../melior-build" }

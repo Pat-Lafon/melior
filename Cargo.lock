@@ -38,6 +38,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 
 [[package]]
+name = "bril-dialect-example"
+version = "0.1.0"
+dependencies = [
+ "melior",
+ "melior-build",
+ "mlir-sys",
+]
+
+[[package]]
 name = "caseless"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -113,6 +122,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "custom-dialect-example"
+version = "0.1.0"
+dependencies = [
+ "melior",
+ "melior-build",
+ "mlir-sys",
 ]
 
 [[package]]
@@ -246,6 +264,17 @@ dependencies = [
  "melior-macro",
  "mlir-sys",
  "pretty_assertions",
+]
+
+[[package]]
+name = "melior-build"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["macro", "melior"]
+members = ["macro", "melior", "melior-build", "examples/custom_dialect", "examples/bril_dialect"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,17 @@
+[package]
+name = "melior-build"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 WITH LLVM-exception"
+description = "Build-time helpers for registering custom MLIR dialects with melior"
+repository = "https://github.com/mlir-rs/melior"
+readme = "README.md"
+keywords = ["compiler", "llvm", "mlir"]
+categories = ["compilers", "development-tools::build-utils"]
+
+[dependencies]
+cc = "1"
+quote = "1"
+proc-macro2 = "1"
+regex = "1"
+thiserror = "2"
