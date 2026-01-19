@@ -53,6 +53,24 @@
 //! }
 //! ```
 //!
+//! ## Additional C++ Sources
+//!
+//! If your dialect requires additional C++ implementation files (e.g., for
+//! custom verifiers, canonicalizers, or builders), you can include them:
+//!
+//! ```rust,ignore
+//! use melior_build::DialectBuilder;
+//!
+//! fn main() {
+//!     DialectBuilder::new("my_dialect")
+//!         .td_file("src/dialect/MyDialect.td")
+//!         .cpp_file("src/dialect/MyDialectImpl.cpp")
+//!         .cpp_files(["src/dialect/Canonicalize.cpp", "src/dialect/Verifiers.cpp"])
+//!         .build()
+//!         .expect("Failed to build dialect");
+//! }
+//! ```
+//!
 //! In your `lib.rs`:
 //!
 //! ```rust,ignore
@@ -102,9 +120,9 @@ pub(crate) fn to_class_name(s: &str) -> String {
 /// 3. Compiling the C++ into a static library
 /// 4. Generating Rust FFI bindings
 ///
-/// The builder auto-detects what each TableGen file contains (dialect definitions,
-/// operations, types, attributes, enums, FunctionOpInterface) and runs only the
-/// relevant generators.
+/// The builder auto-detects what each TableGen file contains (dialect
+/// definitions, operations, types, attributes, enums, FunctionOpInterface) and
+/// runs only the relevant generators.
 #[derive(Debug, Clone)]
 pub struct DialectBuilder {
     /// The dialect name (e.g., "toy")
@@ -115,6 +133,8 @@ pub struct DialectBuilder {
     td_files: Vec<PathBuf>,
     /// Include directories for TableGen
     include_dirs: Vec<PathBuf>,
+    /// Additional C++ source files to compile
+    cpp_files: Vec<PathBuf>,
     /// Output directory (defaults to OUT_DIR)
     output_dir: Option<PathBuf>,
 }
@@ -129,6 +149,7 @@ impl DialectBuilder {
             cpp_namespace: None,
             td_files: Vec::new(),
             include_dirs: Vec::new(),
+            cpp_files: Vec::new(),
             output_dir: None,
         }
     }
@@ -163,6 +184,22 @@ impl DialectBuilder {
     /// Add multiple include directories for TableGen processing.
     pub fn include_dirs<P: AsRef<Path>>(mut self, paths: impl IntoIterator<Item = P>) -> Self {
         self.include_dirs
+            .extend(paths.into_iter().map(|p| p.as_ref().to_path_buf()));
+        self
+    }
+
+    /// Add an additional C++ source file to compile.
+    ///
+    /// Use this for custom verifiers, canonicalizers, builders, or other
+    /// C++ implementations required by your TableGen definitions.
+    pub fn cpp_file(mut self, path: impl AsRef<Path>) -> Self {
+        self.cpp_files.push(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Add multiple additional C++ source files to compile.
+    pub fn cpp_files<P: AsRef<Path>>(mut self, paths: impl IntoIterator<Item = P>) -> Self {
+        self.cpp_files
             .extend(paths.into_iter().map(|p| p.as_ref().to_path_buf()));
         self
     }
@@ -233,13 +270,24 @@ impl DialectBuilder {
         let cpp_file = output_dir.join(format!("{}_capi.cpp", self.name));
         cpp_gen::generate_cpp_registration(&self.name, &cpp_namespace, &gen_options, &cpp_file)?;
 
-        Self::compile_cpp(&self.name, &cpp_file, &inc_dir, &llvm_prefix)?;
+        Self::compile_cpp(
+            &self.name,
+            &cpp_file,
+            &self.cpp_files,
+            &self.include_dirs,
+            &inc_dir,
+            &llvm_prefix,
+        )?;
 
         let rust_file = output_dir.join(format!("{}_register.rs", self.name));
         rust_gen::generate_rust_ffi(&self.name, &rust_file)?;
 
         for td_file in &self.td_files {
             println!("cargo:rerun-if-changed={}", td_file.display());
+        }
+
+        for cpp_file in &self.cpp_files {
+            println!("cargo:rerun-if-changed={}", cpp_file.display());
         }
 
         Ok(())
@@ -259,12 +307,15 @@ impl DialectBuilder {
         // Try llvm-config first (most reliable when available)
         if let Some(prefix) = Self::llvm_config("--prefix") {
             // Also check version-specific env var in case user wants to override
-            if let Some(version) = Self::llvm_config("--version") {
-                if let Some(major) = version.split('.').next().and_then(|v| v.parse::<u32>().ok()) {
-                    let var = format!("MLIR_SYS_{}0_PREFIX", major);
-                    if let Ok(p) = std::env::var(&var) {
-                        return Ok(PathBuf::from(p));
-                    }
+            if let Some(version) = Self::llvm_config("--version")
+                && let Some(major) = version
+                    .split('.')
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+            {
+                let var = format!("MLIR_SYS_{}0_PREFIX", major);
+                if let Ok(p) = std::env::var(&var) {
+                    return Ok(PathBuf::from(p));
                 }
             }
             return Ok(PathBuf::from(prefix));
@@ -293,6 +344,8 @@ impl DialectBuilder {
     fn compile_cpp(
         name: &str,
         cpp_file: &Path,
+        additional_cpp_files: &[PathBuf],
+        include_dirs: &[PathBuf],
         inc_dir: &Path,
         llvm_prefix: &Path,
     ) -> Result<(), Error> {
@@ -308,9 +361,19 @@ impl DialectBuilder {
             .flag_if_supported("-fno-rtti")
             .flag_if_supported("-fno-exceptions")
             // Suppress warnings from LLVM/MLIR headers and generated code
-            .flag_if_supported(&format!("-isystem{}", llvm_include.display()))
-            .flag_if_supported(&format!("-isystem{}", inc_dir.display()))
+            .flag_if_supported(format!("-isystem{}", llvm_include.display()))
+            .flag_if_supported(format!("-isystem{}", inc_dir.display()))
             .flag_if_supported("-Wno-unused-parameter");
+
+        // Add user-specified include directories
+        for dir in include_dirs {
+            build.include(dir);
+        }
+
+        // Add additional C++ source files
+        for file in additional_cpp_files {
+            build.file(file);
+        }
 
         #[cfg(target_os = "macos")]
         build.cpp_link_stdlib("c++");

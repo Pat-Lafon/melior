@@ -79,7 +79,7 @@ mod tests {
         let location = Location::unknown(&context);
         let _module = Module::new(location);
 
-        // The math_ext module from the dialect! macro should have operation builders
-        // This test verifies the generated code compiles
+        // The math_ext module from the dialect! macro should have operation
+        // builders This test verifies the generated code compiles
     }
 }

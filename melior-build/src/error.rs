@@ -10,7 +10,9 @@ pub enum Error {
     MissingOutDir,
 
     /// LLVM/MLIR installation could not be found.
-    #[error("Could not find LLVM/MLIR installation. Ensure llvm-config is in PATH, or set LLVM_PREFIX.")]
+    #[error(
+        "Could not find LLVM/MLIR installation. Ensure llvm-config is in PATH, or set LLVM_PREFIX."
+    )]
     LlvmNotFound,
 
     /// mlir-tblgen binary could not be found.

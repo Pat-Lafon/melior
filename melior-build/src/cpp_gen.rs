@@ -1,10 +1,7 @@
 //! C++ code generation for dialect registration.
 
-use crate::tblgen::GenerationOptions;
-use crate::to_class_name;
-use crate::Error;
-use std::fs;
-use std::path::Path;
+use crate::{Error, tblgen::GenerationOptions, to_class_name};
+use std::{fs, path::Path};
 
 /// Generate the C++ registration wrapper file.
 ///

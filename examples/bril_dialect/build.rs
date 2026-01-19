@@ -3,7 +3,11 @@
 //! Demonstrates melior-build's multi-file support with auto-detection:
 //! - `BrilDialect.td` - Dialect definition
 //! - `BrilTypes.td` - Custom type definitions (PtrType)
-//! - `BrilOps.td` - Operation definitions (including FuncOp with FunctionOpInterface)
+//! - `BrilOps.td` - Operation definitions (including FuncOp with
+//!   FunctionOpInterface)
+//!
+//! Also demonstrates custom C++ implementation files for verifiers:
+//! - `BrilOpsImpl.cpp` - Custom verifiers for LoadOp and StoreOp
 
 use melior_build::DialectBuilder;
 
@@ -14,6 +18,7 @@ fn main() {
         .td_file("src/dialect/bril/BrilOps.td")
         .include_dir("src/dialect")
         .cpp_namespace("mlir::bril")
+        .cpp_file("src/dialect/BrilOpsImpl.cpp")
         .build()
         .expect("Failed to build bril dialect");
 }

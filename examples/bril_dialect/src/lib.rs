@@ -8,7 +8,8 @@
 //!
 //! # File Structure
 //!
-//! This example demonstrates both single-file and multi-file TableGen approaches:
+//! This example demonstrates both single-file and multi-file TableGen
+//! approaches:
 //!
 //! ```text
 //! src/dialect/
@@ -21,13 +22,13 @@
 //!
 //! # Why Two Approaches?
 //!
-//! - **`melior-build`** (in `build.rs`) uses the official LLVM `mlir-tblgen` tool,
-//!   which fully supports TableGen's include mechanism. It can process split files
-//!   and auto-detects what each file contains.
+//! - **`melior-build`** (in `build.rs`) uses the official LLVM `mlir-tblgen`
+//!   tool, which fully supports TableGen's include mechanism. It can process
+//!   split files and auto-detects what each file contains.
 //!
-//! - **`melior::dialect!`** macro uses a Rust-based TableGen parser that runs at
-//!   compile time. This parser has limitations with include path resolution, so
-//!   it works most reliably with a single combined TD file.
+//! - **`melior::dialect!`** macro uses a Rust-based TableGen parser that runs
+//!   at compile time. This parser has limitations with include path resolution,
+//!   so it works most reliably with a single combined TD file.
 //!
 //! Both tools serve different purposes:
 //! - `melior-build` generates C++ code for dialect registration with MLIR
@@ -37,9 +38,10 @@ use melior::{Context, dialect::DialectRegistry, utility::register_all_dialects};
 
 // Generate Rust operation wrappers from TableGen using the dialect! macro.
 //
-// We use the combined single-file BrilDialect.td here because the dialect! macro's
-// TableGen parser works best with a single file. The split files in bril/ are used
-// by melior-build (see build.rs) which uses the official mlir-tblgen tool.
+// We use the combined single-file BrilDialect.td here because the dialect!
+// macro's TableGen parser works best with a single file. The split files in
+// bril/ are used by melior-build (see build.rs) which uses the official
+// mlir-tblgen tool.
 melior::dialect! {
     name: "bril",
     td_file: "./examples/bril_dialect/src/dialect/BrilDialect.td",
@@ -69,10 +71,11 @@ pub fn create_context_with_bril() -> Context {
 mod tests {
     use super::*;
     use melior::ir::{
+        Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike, Type,
+        TypeLike,
         attribute::{IntegerAttribute, TypeAttribute},
         operation::{OperationBuilder, OperationLike},
-        r#type::{IntegerType, FunctionType},
-        Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike, Type, TypeLike,
+        r#type::{FunctionType, IntegerType},
     };
 
     // ==========================================================================
@@ -173,7 +176,10 @@ mod tests {
             .unwrap();
 
         assert!(const_op.verify());
-        assert_eq!(const_op.name().as_string_ref().as_str().unwrap(), "bril.const");
+        assert_eq!(
+            const_op.name().as_string_ref().as_str().unwrap(),
+            "bril.const"
+        );
         assert_eq!(const_op.result_count(), 1);
     }
 
@@ -203,9 +209,7 @@ mod tests {
         let context = create_context_with_bril();
         let location = Location::unknown(&context);
 
-        let nop_op = OperationBuilder::new("bril.nop", location)
-            .build()
-            .unwrap();
+        let nop_op = OperationBuilder::new("bril.nop", location).build().unwrap();
 
         assert!(nop_op.verify());
         assert_eq!(nop_op.operand_count(), 0);
@@ -236,7 +240,8 @@ mod tests {
     fn test_dialect_macro_module_exists() {
         use crate::bril;
 
-        // Macro generates: Bril_AddOp -> AddOperation, Bril_ConstantOp -> ConstantOperation
+        // Macro generates: Bril_AddOp -> AddOperation, Bril_ConstantOp ->
+        // ConstantOperation
         assert_eq!(bril::AddOperation::name(), "bril.add");
         assert_eq!(bril::SubOperation::name(), "bril.sub");
         assert_eq!(bril::MulOperation::name(), "bril.mul");

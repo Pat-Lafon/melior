@@ -228,9 +228,12 @@ def Bril_LoadOp : Bril_Op<"load"> {
     let description = [{
         The `bril.load` operation loads a value from the memory location
         pointed to by a pointer.
+
+        The result type must match the pointer's pointee type.
     }];
     let arguments = (ins Bril_PtrType:$ptr);
     let results = (outs ValidBrilType);
+    let hasVerifier = 1;
 }
 
 def Bril_StoreOp : Bril_Op<"store"> {
@@ -238,8 +241,11 @@ def Bril_StoreOp : Bril_Op<"store"> {
     let description = [{
         The `bril.store` operation stores a value to the memory location
         pointed to by a pointer.
+
+        The value type must match the pointer's pointee type.
     }];
     let arguments = (ins Bril_PtrType:$ptr, ValidBrilType:$value);
+    let hasVerifier = 1;
 }
 
 def Bril_PtrAddOp : Bril_Op<"ptr_add", [Pure]> {

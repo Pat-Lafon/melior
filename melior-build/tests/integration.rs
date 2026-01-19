@@ -20,6 +20,16 @@ fn test_dialect_builder_multiple_files() {
 }
 
 #[test]
+fn test_dialect_builder_cpp_files() {
+    use melior_build::DialectBuilder;
+
+    let _builder = DialectBuilder::new("my_dialect")
+        .td_file("dialect.td")
+        .cpp_file("src/Verifiers.cpp")
+        .cpp_files(&["src/Canonicalize.cpp", "src/Builders.cpp"]);
+}
+
+#[test]
 fn test_cpp_generation() {
     let temp_dir = std::env::temp_dir();
     let output_path = temp_dir.join("test_dialect_capi.cpp");

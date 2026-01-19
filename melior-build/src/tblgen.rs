@@ -1,11 +1,12 @@
 //! mlir-tblgen execution wrapper.
 
-use crate::to_class_name;
-use crate::Error;
+use crate::{Error, to_class_name};
 use regex::Regex;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// Options controlling what code to generate.
 #[derive(Debug, Clone, Default)]
@@ -71,8 +72,9 @@ pub fn detect_td_contents(path: &Path) -> Result<TdFileContents, Error> {
     // Patterns to detect different definition types
     // These are intentionally broad to catch most cases
     //
-    // Note: TableGen dialects often define base classes like `class Foo_Op<...> : Op<...>`
-    // and then use them like `def Foo_AddOp : Foo_Op<"add">`. We need to detect both:
+    // Note: TableGen dialects often define base classes like `class Foo_Op<...> :
+    // Op<...>` and then use them like `def Foo_AddOp : Foo_Op<"add">`. We need
+    // to detect both:
     // 1. Direct usage: `: Op<`
     // 2. Custom base class usage: `: SomePrefix_Op<` (ops typically end with _Op)
     let dialect_re = Regex::new(r"def\s+\w+\s*:\s*Dialect\s*\{").unwrap();
@@ -299,7 +301,10 @@ def Bril_AddOp : Bril_Op<"add", [Pure]> {{
 
         let contents = detect_td_contents(&path).unwrap();
         assert!(!contents.has_dialect);
-        assert!(contents.has_ops, "Should detect ops using custom _Op< base class");
+        assert!(
+            contents.has_ops,
+            "Should detect ops using custom _Op< base class"
+        );
         assert!(!contents.has_types);
 
         std::fs::remove_file(&path).ok();
@@ -323,7 +328,10 @@ def Bril_PtrType : Bril_Type<"Ptr", "ptr"> {{
         let contents = detect_td_contents(&path).unwrap();
         assert!(!contents.has_dialect);
         assert!(!contents.has_ops);
-        assert!(contents.has_types, "Should detect types using custom _Type< base class");
+        assert!(
+            contents.has_types,
+            "Should detect types using custom _Type< base class"
+        );
 
         std::fs::remove_file(&path).ok();
     }

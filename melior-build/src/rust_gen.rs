@@ -1,8 +1,7 @@
 //! Rust FFI code generation for dialect registration.
 
 use crate::Error;
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 /// Generate the Rust FFI bindings file.
 ///
