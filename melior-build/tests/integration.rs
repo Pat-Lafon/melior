@@ -39,18 +39,46 @@ fn test_cpp_generation() {
         "operand_test",
         "mlir::operand_test",
         &options,
+        Some("operand_test"), // Subdirectory based on namespace
         &output_path,
     )
     .unwrap();
 
     let content = std::fs::read_to_string(&output_path).unwrap();
 
-    assert!(content.contains("OperandTestDialect.h.inc"));
-    assert!(content.contains("OperandTestDialect.cpp.inc"));
-    assert!(content.contains("OperandTestOps.h.inc"));
-    assert!(content.contains("OperandTestOps.cpp.inc"));
+    // With subdirectory, includes should have the prefix
+    assert!(content.contains("operand_test/OperandTestDialect.h.inc"));
+    assert!(content.contains("operand_test/OperandTestDialect.cpp.inc"));
+    assert!(content.contains("operand_test/OperandTestOps.h.inc"));
+    assert!(content.contains("operand_test/OperandTestOps.cpp.inc"));
     assert!(content.contains("mlir::operand_test::OperandTestDialect"));
     assert!(content.contains("MLIR_DEFINE_CAPI_DIALECT_REGISTRATION"));
+
+    std::fs::remove_file(&output_path).ok();
+}
+
+#[test]
+fn test_cpp_generation_no_subdir() {
+    let temp_dir = std::env::temp_dir();
+    let output_path = temp_dir.join("test_dialect_no_subdir_capi.cpp");
+
+    let options = melior_build::tblgen::GenerationOptions::default();
+    melior_build::cpp_gen::generate_cpp_registration(
+        "simple",
+        "mlir::simple",
+        &options,
+        None, // No subdirectory
+        &output_path,
+    )
+    .unwrap();
+
+    let content = std::fs::read_to_string(&output_path).unwrap();
+
+    // Without subdirectory, includes should not have a prefix
+    assert!(content.contains("\"SimpleDialect.h.inc\""));
+    assert!(content.contains("\"SimpleOps.h.inc\""));
+    // Should NOT contain subdirectory prefix
+    assert!(!content.contains("simple/SimpleDialect"));
 
     std::fs::remove_file(&output_path).ok();
 }

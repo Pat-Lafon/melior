@@ -154,9 +154,64 @@ impl DialectBuilder {
         }
     }
 
+    /// Extracts subdirectory path from cpp_namespace.
+    ///
+    /// Returns:
+    /// - `Ok(Some("bril"))` for `"mlir::bril"`
+    /// - `Ok(None)` if cpp_namespace is not set
+    /// - `Err` for single-level namespaces (must use `mlir::X` pattern)
+    /// - `Err` for namespaces with 3+ levels
+    /// - `Err` for malformed namespaces (leading/trailing `::`)
+    fn namespace_subdir(&self) -> Result<Option<String>, Error> {
+        match &self.cpp_namespace {
+            None => Ok(None),
+            Some(ns) => {
+                let trimmed = ns.trim();
+                if trimmed.is_empty() {
+                    return Ok(None);
+                }
+
+                // Reject leading or trailing ::
+                if trimmed.starts_with("::") || trimmed.ends_with("::") {
+                    return Err(Error::InvalidNamespace(format!(
+                        "cpp_namespace '{}' has invalid leading or trailing '::'.",
+                        ns
+                    )));
+                }
+
+                let parts: Vec<&str> = trimmed.split("::").collect();
+                match parts.as_slice() {
+                    ["mlir", dialect] => Ok(Some((*dialect).to_string())),
+                    [single] => Err(Error::InvalidNamespace(format!(
+                        "cpp_namespace '{}' must use the 'mlir::namespace' pattern. \
+                         Did you mean 'mlir::{}'?",
+                        ns, single
+                    ))),
+                    _ => Err(Error::InvalidNamespace(format!(
+                        "cpp_namespace '{}' has more than 2 levels. \
+                         Only 'mlir::namespace' pattern is supported.",
+                        ns
+                    ))),
+                }
+            }
+        }
+    }
+
     /// Set the C++ namespace for the dialect.
     ///
-    /// If not set, defaults to `mlir::{name}`.
+    /// The namespace must follow the `mlir::name` pattern (e.g., `mlir::bril`).
+    /// This determines both the C++ namespace wrapping and the subdirectory
+    /// for generated `.inc` files (e.g., `inc/bril/BrilOps.h.inc`).
+    ///
+    /// If not set, defaults to `mlir::{name}` and files are placed directly
+    /// in the `inc/` directory without a subdirectory.
+    ///
+    /// # Errors
+    ///
+    /// The build will fail if the namespace:
+    /// - Has only one level (e.g., `"bril"` instead of `"mlir::bril"`)
+    /// - Has more than two levels (e.g., `"mlir::foo::bar"`)
+    /// - Has leading or trailing `::` (e.g., `"mlir::bril::"`)
     pub fn cpp_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.cpp_namespace = Some(namespace.into());
         self
@@ -235,8 +290,23 @@ impl DialectBuilder {
         std::fs::create_dir_all(&output_dir)?;
 
         let tblgen_runner = tblgen::TblgenRunner::new(&llvm_prefix)?;
-        let inc_dir = output_dir.join("inc");
-        std::fs::create_dir_all(&inc_dir)?;
+
+        // Create base inc/ directory
+        let inc_base = output_dir.join("inc");
+        std::fs::create_dir_all(&inc_base)?;
+
+        // Get namespace-based subdirectory (e.g., "mlir::bril" -> "bril")
+        let inc_subdir = self.namespace_subdir()?;
+
+        // Create the actual output directory for .inc files
+        let inc_dir = match &inc_subdir {
+            Some(subdir) => {
+                let dir = inc_base.join(subdir);
+                std::fs::create_dir_all(&dir)?;
+                dir
+            }
+            None => inc_base.clone(),
+        };
 
         let mut detected_types = false;
         let mut detected_attrs = false;
@@ -268,14 +338,20 @@ impl DialectBuilder {
         };
 
         let cpp_file = output_dir.join(format!("{}_capi.cpp", self.name));
-        cpp_gen::generate_cpp_registration(&self.name, &cpp_namespace, &gen_options, &cpp_file)?;
+        cpp_gen::generate_cpp_registration(
+            &self.name,
+            &cpp_namespace,
+            &gen_options,
+            inc_subdir.as_deref(),
+            &cpp_file,
+        )?;
 
         Self::compile_cpp(
             &self.name,
             &cpp_file,
             &self.cpp_files,
             &self.include_dirs,
-            &inc_dir,
+            &inc_base, // Use base inc/ dir so includes like "bril/BrilOps.h.inc" resolve
             &llvm_prefix,
         )?;
 
@@ -389,5 +465,84 @@ impl DialectBuilder {
         println!("cargo:rustc-link-lib=MLIRCAPIIR");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_namespace_subdir_mlir_prefix() {
+        let builder = DialectBuilder::new("test").cpp_namespace("mlir::bril");
+        assert_eq!(
+            builder.namespace_subdir().unwrap(),
+            Some("bril".to_string())
+        );
+    }
+
+    #[test]
+    fn test_namespace_subdir_single_level_errors() {
+        // Single-level namespace should error - must use mlir::X pattern
+        let builder = DialectBuilder::new("test").cpp_namespace("bril");
+        let err = builder.namespace_subdir().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must use the 'mlir::namespace' pattern")
+        );
+        assert!(err.to_string().contains("Did you mean 'mlir::bril'"));
+    }
+
+    #[test]
+    fn test_namespace_subdir_too_deep() {
+        let builder = DialectBuilder::new("test").cpp_namespace("mlir::foo::bar");
+        let err = builder.namespace_subdir().unwrap_err();
+        assert!(err.to_string().contains("has more than 2 levels"));
+    }
+
+    #[test]
+    fn test_namespace_subdir_none() {
+        let builder = DialectBuilder::new("test");
+        assert_eq!(builder.namespace_subdir().unwrap(), None);
+    }
+
+    #[test]
+    fn test_namespace_subdir_empty_string() {
+        let builder = DialectBuilder::new("test").cpp_namespace("");
+        assert_eq!(builder.namespace_subdir().unwrap(), None);
+    }
+
+    #[test]
+    fn test_namespace_subdir_whitespace() {
+        let builder = DialectBuilder::new("test").cpp_namespace("  mlir::bril  ");
+        assert_eq!(
+            builder.namespace_subdir().unwrap(),
+            Some("bril".to_string())
+        );
+    }
+
+    #[test]
+    fn test_namespace_subdir_only_mlir() {
+        // "mlir" alone should error (single-level)
+        let builder = DialectBuilder::new("test").cpp_namespace("mlir");
+        let err = builder.namespace_subdir().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must use the 'mlir::namespace' pattern")
+        );
+    }
+
+    #[test]
+    fn test_namespace_subdir_trailing_colons() {
+        let builder = DialectBuilder::new("test").cpp_namespace("mlir::bril::");
+        let err = builder.namespace_subdir().unwrap_err();
+        assert!(err.to_string().contains("invalid leading or trailing '::'"));
+    }
+
+    #[test]
+    fn test_namespace_subdir_leading_colons() {
+        let builder = DialectBuilder::new("test").cpp_namespace("::mlir::bril");
+        let err = builder.namespace_subdir().unwrap_err();
+        assert!(err.to_string().contains("invalid leading or trailing '::'"));
     }
 }

@@ -9,20 +9,26 @@ use std::{fs, path::Path};
 /// 1. Includes the mlir-tblgen generated .inc files
 /// 2. Implements the dialect's initialize() method
 /// 3. Uses MLIR_DEFINE_CAPI_DIALECT_REGISTRATION to expose the C API
+///
+/// The `inc_subdir` parameter specifies the subdirectory prefix for .inc includes.
+/// For example, if `inc_subdir` is `Some("bril")`, includes become `"bril/BrilOps.h.inc"`.
 pub fn generate_cpp_registration(
     dialect_name: &str,
     cpp_namespace: &str,
     options: &GenerationOptions,
+    inc_subdir: Option<&str>,
     output_path: &Path,
 ) -> Result<(), Error> {
     let class_name = to_class_name(dialect_name);
+    let inc_prefix = inc_subdir.map(|s| format!("{}/", s)).unwrap_or_default();
 
     let type_includes = if options.generate_types {
         format!(
             r#"
 #define GET_TYPEDEF_CLASSES
-#include "{class_name}Types.h.inc"
+#include "{inc_prefix}{class_name}Types.h.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -33,8 +39,9 @@ pub fn generate_cpp_registration(
         format!(
             r#"
 #define GET_TYPEDEF_CLASSES
-#include "{class_name}Types.cpp.inc"
+#include "{inc_prefix}{class_name}Types.cpp.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -45,8 +52,9 @@ pub fn generate_cpp_registration(
         format!(
             r#"
 #define GET_ATTRDEF_CLASSES
-#include "{class_name}Attrs.h.inc"
+#include "{inc_prefix}{class_name}Attrs.h.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -57,8 +65,9 @@ pub fn generate_cpp_registration(
         format!(
             r#"
 #define GET_ATTRDEF_CLASSES
-#include "{class_name}Attrs.cpp.inc"
+#include "{inc_prefix}{class_name}Attrs.cpp.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -68,8 +77,9 @@ pub fn generate_cpp_registration(
     let enum_includes = if options.generate_enums {
         format!(
             r#"
-#include "{class_name}Enums.h.inc"
+#include "{inc_prefix}{class_name}Enums.h.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -79,8 +89,9 @@ pub fn generate_cpp_registration(
     let enum_impl_includes = if options.generate_enums {
         format!(
             r#"
-#include "{class_name}Enums.cpp.inc"
+#include "{inc_prefix}{class_name}Enums.cpp.inc"
 "#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -92,8 +103,9 @@ pub fn generate_cpp_registration(
             r#"
     addTypes<
 #define GET_TYPEDEF_LIST
-#include "{class_name}Types.cpp.inc"
+#include "{inc_prefix}{class_name}Types.cpp.inc"
     >();"#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -105,8 +117,9 @@ pub fn generate_cpp_registration(
             r#"
     addAttributes<
 #define GET_ATTRDEF_LIST
-#include "{class_name}Attrs.cpp.inc"
+#include "{inc_prefix}{class_name}Attrs.cpp.inc"
     >();"#,
+            inc_prefix = inc_prefix,
             class_name = class_name
         )
     } else {
@@ -142,25 +155,25 @@ pub fn generate_cpp_registration(
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 {function_interface_include}
 // Include generated dialect declaration
-#include "{class_name}Dialect.h.inc"
+#include "{inc_prefix}{class_name}Dialect.h.inc"
 {type_includes}{attr_includes}{enum_includes}
 // Include generated operation declarations (after types/attrs so they can use them)
 #define GET_OP_CLASSES
-#include "{class_name}Ops.h.inc"
+#include "{inc_prefix}{class_name}Ops.h.inc"
 
 // Include generated dialect definition
-#include "{class_name}Dialect.cpp.inc"
+#include "{inc_prefix}{class_name}Dialect.cpp.inc"
 {type_impl_includes}{attr_impl_includes}{enum_impl_includes}
 // Include generated operation definitions
 #define GET_OP_CLASSES
-#include "{class_name}Ops.cpp.inc"
+#include "{inc_prefix}{class_name}Ops.cpp.inc"
 
 namespace {cpp_namespace} {{
 
 void {class_name}Dialect::initialize() {{
     addOperations<
 #define GET_OP_LIST
-#include "{class_name}Ops.cpp.inc"
+#include "{inc_prefix}{class_name}Ops.cpp.inc"
     >();{type_registration}{attr_registration}
 }}
 
@@ -172,6 +185,7 @@ extern "C" {{
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION({class_name}, {dialect_name}, {cpp_namespace}::{class_name}Dialect)
 }}
 "#,
+        inc_prefix = inc_prefix,
         class_name = class_name,
         dialect_name = dialect_name,
         cpp_namespace = cpp_namespace,
@@ -202,7 +216,7 @@ mod tests {
         let output_path = temp_dir.join("test_dialect_capi.cpp");
 
         let options = GenerationOptions::default();
-        generate_cpp_registration("toy", "mlir::toy", &options, &output_path).unwrap();
+        generate_cpp_registration("toy", "mlir::toy", &options, None, &output_path).unwrap();
 
         let mut content = String::new();
         std::fs::File::open(&output_path)
@@ -226,6 +240,30 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_cpp_registration_with_subdir() {
+        let temp_dir = std::env::temp_dir();
+        let output_path = temp_dir.join("test_dialect_subdir_capi.cpp");
+
+        let options = GenerationOptions::default();
+        generate_cpp_registration("bril", "mlir::bril", &options, Some("bril"), &output_path)
+            .unwrap();
+
+        let mut content = String::new();
+        std::fs::File::open(&output_path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+
+        // Should contain subdirectory prefix in includes
+        assert!(content.contains("bril/BrilDialect.h.inc"));
+        assert!(content.contains("bril/BrilDialect.cpp.inc"));
+        assert!(content.contains("bril/BrilOps.h.inc"));
+        assert!(content.contains("bril/BrilOps.cpp.inc"));
+
+        std::fs::remove_file(&output_path).ok();
+    }
+
+    #[test]
     fn test_generate_cpp_registration_with_types() {
         let temp_dir = std::env::temp_dir();
         let output_path = temp_dir.join("test_dialect_with_types_capi.cpp");
@@ -236,7 +274,7 @@ mod tests {
             generate_enums: false,
             use_function_interface: false,
         };
-        generate_cpp_registration("toy", "mlir::toy", &options, &output_path).unwrap();
+        generate_cpp_registration("toy", "mlir::toy", &options, None, &output_path).unwrap();
 
         let mut content = String::new();
         std::fs::File::open(&output_path)
@@ -259,6 +297,39 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_cpp_registration_with_types_and_subdir() {
+        let temp_dir = std::env::temp_dir();
+        let output_path = temp_dir.join("test_dialect_types_subdir_capi.cpp");
+
+        let options = GenerationOptions {
+            generate_types: true,
+            generate_attributes: true,
+            generate_enums: true,
+            use_function_interface: false,
+        };
+        generate_cpp_registration("bril", "mlir::bril", &options, Some("bril"), &output_path)
+            .unwrap();
+
+        let mut content = String::new();
+        std::fs::File::open(&output_path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+
+        // All includes should have subdirectory prefix
+        assert!(content.contains("bril/BrilDialect.h.inc"));
+        assert!(content.contains("bril/BrilOps.h.inc"));
+        assert!(content.contains("bril/BrilTypes.h.inc"));
+        assert!(content.contains("bril/BrilTypes.cpp.inc"));
+        assert!(content.contains("bril/BrilAttrs.h.inc"));
+        assert!(content.contains("bril/BrilAttrs.cpp.inc"));
+        assert!(content.contains("bril/BrilEnums.h.inc"));
+        assert!(content.contains("bril/BrilEnums.cpp.inc"));
+
+        std::fs::remove_file(&output_path).ok();
+    }
+
+    #[test]
     fn test_generate_cpp_registration_with_all_features() {
         let temp_dir = std::env::temp_dir();
         let output_path = temp_dir.join("test_dialect_full_capi.cpp");
@@ -269,8 +340,14 @@ mod tests {
             generate_enums: true,
             use_function_interface: false,
         };
-        generate_cpp_registration("my_dialect", "mlir::my_dialect", &options, &output_path)
-            .unwrap();
+        generate_cpp_registration(
+            "my_dialect",
+            "mlir::my_dialect",
+            &options,
+            None,
+            &output_path,
+        )
+        .unwrap();
 
         let mut content = String::new();
         std::fs::File::open(&output_path)
@@ -310,8 +387,14 @@ mod tests {
             generate_enums: false,
             use_function_interface: true,
         };
-        generate_cpp_registration("func_dialect", "mlir::func_dialect", &options, &output_path)
-            .unwrap();
+        generate_cpp_registration(
+            "func_dialect",
+            "mlir::func_dialect",
+            &options,
+            None,
+            &output_path,
+        )
+        .unwrap();
 
         let mut content = String::new();
         std::fs::File::open(&output_path)

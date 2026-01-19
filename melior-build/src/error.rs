@@ -23,6 +23,10 @@ pub enum Error {
     #[error("mlir-tblgen failed: {0}")]
     TblgenFailed(String),
 
+    /// Invalid cpp_namespace format.
+    #[error("{0}")]
+    InvalidNamespace(String),
+
     /// I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
