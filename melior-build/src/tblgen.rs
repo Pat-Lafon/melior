@@ -1,37 +1,13 @@
 //! mlir-tblgen execution wrapper.
 
-use crate::{Error, to_class_name};
+use crate::Error;
 use regex::Regex;
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
-
-/// Options controlling what code to generate.
-#[derive(Debug, Clone, Default)]
-pub struct GenerationOptions {
-    /// Generate custom type definitions.
-    pub generate_types: bool,
-    /// Generate custom attribute definitions.
-    pub generate_attributes: bool,
-    /// Generate enum definitions.
-    pub generate_enums: bool,
-    /// Include FunctionInterfaces header (for FunctionOpInterface support).
-    pub use_function_interface: bool,
-}
-
-impl GenerationOptions {
-    /// Create GenerationOptions from auto-detected file contents.
-    pub fn from_detected(contents: &TdFileContents) -> Self {
-        Self {
-            generate_types: contents.has_types,
-            generate_attributes: contents.has_attrs,
-            generate_enums: contents.has_enums,
-            use_function_interface: contents.has_function_interface,
-        }
-    }
-}
 
 /// What a TableGen file contains, detected via text analysis.
 #[derive(Debug, Clone, Default)]
@@ -57,38 +33,59 @@ impl TdFileContents {
     }
 }
 
+/// Tracks which TD file stems generated which content types.
+///
+/// This is used to generate correct include paths in the C++ registration file,
+/// since different content types may come from different TD files with different stems.
+#[derive(Debug, Clone, Default)]
+pub struct GeneratedFiles {
+    /// TD file stem that generated the dialect (e.g., "BrilOps" from BrilOps.td)
+    pub dialect_stem: Option<String>,
+    /// TD file stem that generated the ops
+    pub ops_stem: Option<String>,
+    /// TD file stem that generated the types
+    pub types_stem: Option<String>,
+    /// TD file stem that generated the attrs
+    pub attrs_stem: Option<String>,
+    /// TD file stem that generated the enums
+    pub enums_stem: Option<String>,
+    /// Whether FunctionOpInterface is used
+    pub use_function_interface: bool,
+}
+
+// Static regexes for TD file content detection (compiled once)
+static DIALECT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"def\s+\w+\s*:\s*Dialect\s*\{").unwrap());
+static OP_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"def\s+\w+\s*:\s*\w*_?Op<").unwrap());
+static TYPEDEF_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"def\s+\w+\s*:\s*(\w*_?Type<|TypeDef<)").unwrap());
+static ATTRDEF_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"def\s+\w+\s*:\s*(\w*_?Attr<|AttrDef<)").unwrap());
+static ENUM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(EnumAttr|IntEnumAttr|BitEnumAttr)").unwrap());
+
 /// Detect what definitions a TableGen file contains.
 ///
 /// This uses simple regex matching to detect:
 /// - Dialect definitions: `def.*: Dialect`
-/// - Op definitions: `: SomeClass_Op<` or `: Op<`
-/// - Type definitions: `TypeDef<` or `: SomeClass_Type<`
-/// - Attr definitions: `AttrDef<`
+/// - Op definitions: `def SomeName : SomeClass_Op<` or `def SomeName : Op<`
+/// - Type definitions: `def SomeName : TypeDef<` or `def SomeName : SomeClass_Type<`
+/// - Attr definitions: `def SomeName : AttrDef<` or `def SomeName : SomeClass_Attr<`
 /// - Enum definitions: `EnumAttr` or `IntEnumAttr`
 /// - FunctionOpInterface usage
+///
+/// Note: This distinguishes between `class` statements (base class definitions)
+/// and `def` statements (actual definitions). Only `def` statements count as
+/// defining ops/types/attrs.
 pub fn detect_td_contents(path: &Path) -> Result<TdFileContents, Error> {
     let content = fs::read_to_string(path)?;
 
-    // Patterns to detect different definition types
-    // These are intentionally broad to catch most cases
-    //
-    // Note: TableGen dialects often define base classes like `class Foo_Op<...> :
-    // Op<...>` and then use them like `def Foo_AddOp : Foo_Op<"add">`. We need
-    // to detect both:
-    // 1. Direct usage: `: Op<`
-    // 2. Custom base class usage: `: SomePrefix_Op<` (ops typically end with _Op)
-    let dialect_re = Regex::new(r"def\s+\w+\s*:\s*Dialect\s*\{").unwrap();
-    let op_re = Regex::new(r":\s*\w*_?Op<").unwrap();
-    let typedef_re = Regex::new(r":\s*(\w*_?Type<|TypeDef<)").unwrap();
-    let attrdef_re = Regex::new(r":\s*(\w*_?Attr<|AttrDef<)").unwrap();
-    let enum_re = Regex::new(r"(EnumAttr|IntEnumAttr|BitEnumAttr)").unwrap();
-
     Ok(TdFileContents {
-        has_dialect: dialect_re.is_match(&content),
-        has_ops: op_re.is_match(&content),
-        has_types: typedef_re.is_match(&content),
-        has_attrs: attrdef_re.is_match(&content),
-        has_enums: enum_re.is_match(&content),
+        has_dialect: DIALECT_RE.is_match(&content),
+        has_ops: OP_RE.is_match(&content),
+        has_types: TYPEDEF_RE.is_match(&content),
+        has_attrs: ATTRDEF_RE.is_match(&content),
+        has_enums: ENUM_RE.is_match(&content),
         has_function_interface: content.contains("FunctionOpInterface"),
     })
 }
@@ -117,6 +114,9 @@ impl TblgenRunner {
     }
 
     /// Generate .inc files for a TD file based on its detected contents.
+    ///
+    /// Output file names are based on the TD file stem (e.g., `BrilOps.td` produces
+    /// `BrilOpsDialect.h.inc`, `BrilOps.h.inc`, etc.), matching MLIR convention.
     pub fn generate_for_file(
         &self,
         td_file: &Path,
@@ -125,20 +125,29 @@ impl TblgenRunner {
         dialect_name: &str,
         contents: &TdFileContents,
     ) -> Result<(), Error> {
-        let class_name = to_class_name(dialect_name);
+        // Use TD file stem for output naming (MLIR convention)
+        let stem = td_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid TD file path: {}", td_file.display()),
+                ))
+            })?;
 
         if contents.has_dialect {
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Dialect.h.inc", class_name)),
+                &output_dir.join(format!("{}Dialect.h.inc", stem)),
                 "-gen-dialect-decls",
                 Some(dialect_name),
             )?;
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Dialect.cpp.inc", class_name)),
+                &output_dir.join(format!("{}Dialect.cpp.inc", stem)),
                 "-gen-dialect-defs",
                 Some(dialect_name),
             )?;
@@ -148,14 +157,14 @@ impl TblgenRunner {
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Ops.h.inc", class_name)),
+                &output_dir.join(format!("{}.h.inc", stem)),
                 "-gen-op-decls",
                 Some(dialect_name),
             )?;
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Ops.cpp.inc", class_name)),
+                &output_dir.join(format!("{}.cpp.inc", stem)),
                 "-gen-op-defs",
                 Some(dialect_name),
             )?;
@@ -165,14 +174,14 @@ impl TblgenRunner {
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Types.h.inc", class_name)),
+                &output_dir.join(format!("{}Types.h.inc", stem)),
                 "-gen-typedef-decls",
                 Some(dialect_name),
             )?;
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Types.cpp.inc", class_name)),
+                &output_dir.join(format!("{}Types.cpp.inc", stem)),
                 "-gen-typedef-defs",
                 Some(dialect_name),
             )?;
@@ -182,14 +191,14 @@ impl TblgenRunner {
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Attrs.h.inc", class_name)),
+                &output_dir.join(format!("{}Attrs.h.inc", stem)),
                 "-gen-attrdef-decls",
                 Some(dialect_name),
             )?;
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Attrs.cpp.inc", class_name)),
+                &output_dir.join(format!("{}Attrs.cpp.inc", stem)),
                 "-gen-attrdef-defs",
                 Some(dialect_name),
             )?;
@@ -199,14 +208,14 @@ impl TblgenRunner {
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Enums.h.inc", class_name)),
+                &output_dir.join(format!("{}Enums.h.inc", stem)),
                 "-gen-enum-decls",
                 Some(dialect_name),
             )?;
             self.run_tblgen(
                 td_file,
                 include_dirs,
-                &output_dir.join(format!("{}Enums.cpp.inc", class_name)),
+                &output_dir.join(format!("{}Enums.cpp.inc", stem)),
                 "-gen-enum-defs",
                 Some(dialect_name),
             )?;
@@ -250,6 +259,7 @@ impl TblgenRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::to_class_name;
     use std::io::Write;
 
     #[test]
@@ -441,6 +451,45 @@ def Bril_AddOp : Bril_Op<"add", [Pure]> {{
         assert!(
             !contents.has_function_interface,
             "Should NOT detect FunctionOpInterface when not present"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_class_definitions_not_detected_as_ops() {
+        // Test that base class definitions (using `class`) are NOT detected as ops.
+        // Only actual op definitions (using `def`) should count.
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_class_not_op.td");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            r#"
+def Bril_Dialect : Dialect {{
+    let name = "bril";
+}}
+
+// This is a base class definition, NOT an op
+class Bril_Op<string mnemonic, list<Trait> traits = []> :
+    Op<Bril_Dialect, mnemonic, traits>;
+
+// Similarly, base class for types should not count
+class Bril_Type<string name, string typeMnemonic, list<Trait> traits = []> :
+    TypeDef<Bril_Dialect, name, traits>;
+"#
+        )
+        .unwrap();
+
+        let contents = detect_td_contents(&path).unwrap();
+        assert!(contents.has_dialect, "Should detect dialect");
+        assert!(
+            !contents.has_ops,
+            "Should NOT detect ops from class definitions"
+        );
+        assert!(
+            !contents.has_types,
+            "Should NOT detect types from class definitions"
         );
 
         std::fs::remove_file(&path).ok();

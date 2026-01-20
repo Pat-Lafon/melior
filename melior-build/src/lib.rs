@@ -308,18 +308,45 @@ impl DialectBuilder {
             None => inc_base.clone(),
         };
 
-        let mut detected_types = false;
-        let mut detected_attrs = false;
-        let mut detected_enums = false;
-        let mut detected_function_interface = false;
+        // Track which TD file stems generated which content types
+        let mut generated = tblgen::GeneratedFiles::default();
 
         for td_file in &self.td_files {
             let contents = tblgen::detect_td_contents(td_file)?;
 
-            detected_types |= contents.has_types;
-            detected_attrs |= contents.has_attrs;
-            detected_enums |= contents.has_enums;
-            detected_function_interface |= contents.has_function_interface;
+            let stem = td_file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("Invalid TD file path: {}", td_file.display()),
+                    ))
+                })?
+                .to_string();
+
+            // Helper to check for duplicates and track stems
+            let track_stem =
+                |has_content: bool, slot: &mut Option<String>, kind: &str| -> Result<(), Error> {
+                    if has_content {
+                        if let Some(existing) = slot.as_ref() {
+                            return Err(Error::DuplicateContent(format!(
+                                "{} defined in multiple TD files: {} and {}",
+                                kind, existing, stem
+                            )));
+                        }
+                        *slot = Some(stem.clone());
+                    }
+                    Ok(())
+                };
+
+            track_stem(contents.has_dialect, &mut generated.dialect_stem, "Dialect")?;
+            track_stem(contents.has_ops, &mut generated.ops_stem, "Ops")?;
+            track_stem(contents.has_types, &mut generated.types_stem, "Types")?;
+            track_stem(contents.has_attrs, &mut generated.attrs_stem, "Attrs")?;
+            track_stem(contents.has_enums, &mut generated.enums_stem, "Enums")?;
+
+            generated.use_function_interface |= contents.has_function_interface;
 
             tblgen_runner.generate_for_file(
                 td_file,
@@ -330,18 +357,11 @@ impl DialectBuilder {
             )?;
         }
 
-        let gen_options = tblgen::GenerationOptions {
-            generate_types: detected_types,
-            generate_attributes: detected_attrs,
-            generate_enums: detected_enums,
-            use_function_interface: detected_function_interface,
-        };
-
         let cpp_file = output_dir.join(format!("{}_capi.cpp", self.name));
         cpp_gen::generate_cpp_registration(
             &self.name,
             &cpp_namespace,
-            &gen_options,
+            &generated,
             inc_subdir.as_deref(),
             &cpp_file,
         )?;

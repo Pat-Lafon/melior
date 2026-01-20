@@ -27,6 +27,10 @@ pub enum Error {
     #[error("{0}")]
     InvalidNamespace(String),
 
+    /// Duplicate content type across TD files.
+    #[error("{0}")]
+    DuplicateContent(String),
+
     /// I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

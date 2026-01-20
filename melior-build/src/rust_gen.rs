@@ -63,7 +63,6 @@ pub use {dialect_name}_registration::{{dialect_handle, insert_into_registry, loa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
 
     #[test]
     fn test_generate_rust_ffi() {
@@ -72,11 +71,7 @@ mod tests {
 
         generate_rust_ffi("toy", &output_path).unwrap();
 
-        let mut content = String::new();
-        std::fs::File::open(&output_path)
-            .unwrap()
-            .read_to_string(&mut content)
-            .unwrap();
+        let content = std::fs::read_to_string(&output_path).unwrap();
 
         assert!(content.contains("mlirGetDialectHandle__toy__"));
         assert!(content.contains("pub fn dialect_handle()"));
